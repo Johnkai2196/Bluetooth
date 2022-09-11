@@ -2,7 +2,6 @@ package com.example.bluetooth
 
 import android.Manifest
 import android.app.Activity
-import android.app.Application
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.BluetoothLeScanner
@@ -10,7 +9,6 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -18,22 +16,21 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material.Button
-import androidx.compose.material.MaterialTheme
-import androidx.compose.material.Surface
-import androidx.compose.material.Text
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
-import androidx.lifecycle.AndroidViewModel
+import androidx.core.app.ActivityCompat.requestPermissions
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -43,24 +40,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.*
+import kotlin.collections.HashMap
+
 
 class MainActivity : ComponentActivity() {
     private var mBluetoothAdapter: BluetoothAdapter? = null
 
     companion object GattAttributes {
         const val SCAN_PERIOD: Long = 5000
-        const val STATE_DISCONNECTED = 0
-        const val STATE_CONNECTING = 1
-        const val STATE_CONNECTED = 2
-        val UUID_HEART_RATE_MEASUREMENT = UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb")
-        val UUID_HEART_RATE_SERVICE = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb")
-        val UUID_CLIENT_CHARACTERISTIC_CONFIG =
-            UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContent {
             val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
             mBluetoothAdapter = bluetoothManager.adapter
@@ -71,70 +63,74 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colors.background
                 ) {
-                    Column() {
+                    var arra = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        arra = arrayOf(
+                            Manifest.permission.BLUETOOTH_SCAN,
+                            Manifest.permission.BLUETOOTH_CONNECT,
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.BLUETOOTH_ADMIN,
+                            Manifest.permission.BLUETOOTH
+                        )
+                    }
+                    requestPermissions(
+                        arra,
+                        1
+                    )
+                    Column(modifier = Modifier.fillMaxSize()) {
                         val model: MyViewModel by viewModels()
-                        Button(onClick = {
-                            model.scanDevices(
-                                bluetoothManager.adapter.bluetoothLeScanner,
-                            )
-                        }) {
-                            Text(text = "gay")
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .absolutePadding(10.dp, 10.dp, 10.dp, 0.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+
+                            Button(
+                                onClick = {
+                                    model.scanDevices(
+                                        bluetoothManager.adapter.bluetoothLeScanner,
+                                    )
+                                }, modifier = Modifier
+                                    .height(50.dp)
+                                    .width(200.dp)
+
+                            ) {
+                                Text(text = "Start scanning")
+                            }
                         }
-
-
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Divider()
+                        ShowDevices(model)
                     }
                 }
             }
         }
     }
-
-
-    private fun hasPermissions(): Boolean {
-        if (mBluetoothAdapter == null || !mBluetoothAdapter!!.isEnabled) {
-            Log.d("DBG", "No Bluetooth LE capability")
-            return false
-        } else if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            Log.d("DBG", "No fine location access")
-            requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 1);
-            return true // assuming that the user grants permission
-        }
-        return true
-    }
-
 }
 
-class MyViewModel(application: Application) : AndroidViewModel(application) {
+
+class MyViewModel() : ViewModel() {
     val scanResults = MutableLiveData<List<ScanResult>>(null)
-    val fScanning = MutableLiveData<Boolean>(false)
+    val fScanning = MutableLiveData(false)
     private val mResults = HashMap<String, ScanResult>()
-    private val context = getApplication<Application>()
 
     fun scanDevices(scanner: BluetoothLeScanner) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (ActivityCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.BLUETOOTH_SCAN
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                ActivityCompat.requestPermissions(
-                    Activity(),
-                    arrayOf(Manifest.permission.BLUETOOTH_SCAN), 1
-                )
-
-            }
-        }
         viewModelScope.launch(Dispatchers.IO) {
             fScanning.postValue(true)
             val settings = ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .setReportDelay(0)
                 .build()
-
-            scanner.startScan(null, settings, leScanCallback)
-            delay(SCAN_PERIOD)
-            scanner.stopScan(leScanCallback)
-            scanResults.postValue(mResults.values.toList())
-            fScanning.postValue(false)
+            try {
+                scanner.startScan(null, settings, leScanCallback)
+                delay(SCAN_PERIOD)
+                scanner.stopScan(leScanCallback)
+                scanResults.postValue(mResults.values.toList())
+                fScanning.postValue(false)
+            } catch (e: SecurityException) {
+                Log.i("Permission", "Permission denied ${e.localizedMessage}")
+            }
         }
     }
 
@@ -149,20 +145,31 @@ class MyViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
-/*
+
 @Composable
-fun ShowDevices(mBluetoothAdapter: BluetoothAdapter, model: MyViewModel = MyViewModel()) {
-    val context = LocalContext.current
-    val values: List<ScanResult>? by model.scanResults.observeAsState(null)
+fun ShowDevices(model: MyViewModel) {
+    val value: List<ScanResult>? by model.scanResults.observeAsState(null)
     val fScanning: Boolean by model.fScanning.observeAsState(false)
     Column {
         LazyColumn {
-            values?.size?.let {
-                items(it) {
-                    Log.i("DBG", "dbg")
+            value?.let { items ->
+                try {
+                    items(items) {
+
+                        /*          (if (it.isConnectable) it.device.address else null)?.let { it1 ->*/
+                        Text(
+                            text = "${it.device.address} ${if (it.device.name == null) "" else it.device.name} ${it.rssi}dBm",
+                            fontSize = 15.sp,
+                            color = if (it.isConnectable) Color.Black else Color.Gray,
+                        )
+                        /*}*/
+                    }
+                } catch (e: SecurityException) {
+                    Log.i("Permission", "Permission denied ${e.localizedMessage}")
                 }
             }
         }
     }
 }
-*/
+
+
