@@ -1,14 +1,12 @@
 package com.example.bluetooth
 
 import android.Manifest
-import android.app.Activity
 import android.bluetooth.*
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -29,8 +27,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.ActivityCompat
-import androidx.core.app.ActivityCompat.requestPermissions
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -51,7 +47,7 @@ class MainActivity : ComponentActivity() {
 
 
     companion object GattAttributes {
-        const val SCAN_PERIOD: Long = 5000
+        const val SCAN_PERIOD: Long = 2000
         val HEART_RATE_SERVICE_UUID = convertFromInteger(0x180D)
         val HEART_RATE_MEASUREMENT_CHAR_UUID = convertFromInteger(0x2A37)
         val CLIENT_CHARACTERISTIC_CONFIG_UUID = convertFromInteger(0x2902)
@@ -87,6 +83,7 @@ class MainActivity : ComponentActivity() {
                     )
                     Column(modifier = Modifier.fillMaxSize()) {
                         val model: MyViewModel by viewModels()
+                        val gal by model.mBPM.observeAsState()
                         Column(
                             Modifier
                                 .fillMaxWidth()
@@ -106,6 +103,10 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 Text(text = "Start scanning")
                             }
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        if (gal != 0) {
+                            Text(text = "Connected $gal bpm")
                         }
                         Spacer(modifier = Modifier.height(10.dp))
                         Divider()
@@ -128,6 +129,8 @@ class MyViewModel() : ViewModel() {
     val scanResults = MutableLiveData<List<ScanResult>>(null)
     val fScanning = MutableLiveData(false)
     private val mResults = HashMap<String, ScanResult>()
+    val mBPM = MutableLiveData<Int>(0)
+
 
     fun scanDevices(scanner: BluetoothLeScanner) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -164,31 +167,32 @@ class MyViewModel() : ViewModel() {
 fun ShowDevices(model: MyViewModel) {
     val value: List<ScanResult>? by model.scanResults.observeAsState(null)
     val context = LocalContext.current
-    val gattClientCallback = GattClientCallback(context)
+    val gattClientCallback = GattClientCallback(context, model)
     Column {
         LazyColumn {
             value?.let { items ->
                 try {
                     items(items) {
-
-                        /*          (if (it.isConnectable) it.device.address else null)?.let { it1 ->*/
                         Text(
                             text = "${it.device.address} ${if (it.device.name == null) "" else it.device.name} ${it.rssi}dBm",
                             fontSize = 15.sp,
                             color = if (it.isConnectable) Color.Black else Color.Gray,
                             modifier = Modifier.selectable(
-                                true,
-                                onClick = {
-                                    it.device.connectGatt(
-                                        context,
-                                        false,
-                                        gattClientCallback
-                                    )
-                                    gattClientCallback.onConnectionStateChange(gatt)
-                                }
-                            )
+                                true
+                            ) {
+                                val gatt = it.device.connectGatt(
+                                    context,
+                                    false,
+                                    gattClientCallback
+                                )
+                                gatt.device.createBond()
+                                gatt.discoverServices()
+                                gattClientCallback.onServicesDiscovered(
+                                    gatt,
+                                    gatt.device.bondState
+                                )
+                            }
                         )
-                        /*}*/
                     }
                 } catch (e: SecurityException) {
                     Log.i("Permission", "Permission denied ${e.localizedMessage}")
@@ -199,58 +203,37 @@ fun ShowDevices(model: MyViewModel) {
 }
 
 
-class GattClientCallback(context: Context) : BluetoothGattCallback() {
-
-    override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-        super.onConnectionStateChange(gatt, status, newState)
-        if (status == BluetoothGatt.GATT_FAILURE) {
-            Log.d("DBG", "GATT connection failure")
-            return
-        } else if (status == BluetoothGatt.GATT_SUCCESS) {
-            Log.d("DBG", "GATT connection success")
-            return
-        }
-        if (newState == BluetoothProfile.STATE_CONNECTED) {
-            Log.d("DBG", "Connected GATT service")
-            try {
-                gatt.discoverServices();
-            } catch (e: SecurityException) {
-                Log.i("Permission", "Permission denied ${e.localizedMessage}")
-            }
-        } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-            Log.d("DBG", "no GATT service")
-        }
-    }
-
+class GattClientCallback(context: Context, model: MyViewModel) : BluetoothGattCallback() {
+    val modal = model
     override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
         super.onServicesDiscovered(gatt, status)
+        Log.d("DBG", (status == BluetoothGatt.GATT_SUCCESS).toString())
         if (status != BluetoothGatt.GATT_SUCCESS) {
+            Log.d("DBG", "No success")
             return
         }
         Log.d("DBG", "onServicesDiscovered()")
-
+        Log.d("DBG", gatt.services.toString())
         for (gattService in gatt.services) {
 
             Log.d("DBG", "Service ${gattService.uuid}")
 
             if (gattService.uuid == HEART_RATE_SERVICE_UUID) {
 
-                Log.d("DBG", "BINGO!!!")
+                Log.d("DBG2", "BINGO!!!")
 
                 for (gattCharacteristic in gattService.characteristics) {
 
-                    Log.d("DBG", "Characteristic${gattCharacteristic.uuid}")
-
-                    val characteristic = gatt.getService(HEART_RATE_SERVICE_UUID)
-                        .getCharacteristic(HEART_RATE_MEASUREMENT_CHAR_UUID)
-
+                    Log.d("DBG2", "Characteristic${gattCharacteristic.uuid}")
                     try {
-                        gatt.setCharacteristicNotification(characteristic, true)
+                        val characteristic = gatt.getService(HEART_RATE_SERVICE_UUID)
+                            .getCharacteristic(HEART_RATE_MEASUREMENT_CHAR_UUID)
+
                         if (gatt.setCharacteristicNotification(characteristic, true)) {
                             val descriptor =
                                 characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
                             descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                            val writing = gatt.writeDescriptor(descriptor)
+                            gatt.writeDescriptor(descriptor)
                         }
 
                     } catch (e: SecurityException) {
@@ -272,16 +255,14 @@ class GattClientCallback(context: Context) : BluetoothGattCallback() {
         Log.d("DBG", "onDescriptorWrite")
     }
 
+
     override fun onCharacteristicChanged(
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic
     ) {
-        Log.d("DBG", "Characteristic data received")
+        val bpm = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT16, 1)
+        Log.d("DBG", "BPM: $bpm")
+        modal.mBPM.postValue(bpm)
     }
-    //    override fun onCharacteristicChanged(gatt: BluetoothGatt,
-//                                         characteristic: BluetoothGattCharacteristic){
-//        val bpm = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT16, 1)
-//        Log.d("DBG", "BPM: $bpm")
-//        mBPM.postValue(bpm)
-//    }
+
 }
