@@ -1,7 +1,6 @@
 package com.example.bluetooth
 
 import android.Manifest
-import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.BluetoothLeScanner
@@ -9,7 +8,6 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -26,11 +24,8 @@ import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.ActivityCompat
-import androidx.core.app.ActivityCompat.requestPermissions
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -39,7 +34,6 @@ import com.example.bluetooth.ui.theme.BluetoothTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.util.*
 import kotlin.collections.HashMap
 
 
@@ -56,7 +50,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
             mBluetoothAdapter = bluetoothManager.adapter
-            val mResults = HashMap<String, ScanResult>()
             BluetoothTheme {
                 // A surface container using the 'background' color from the theme
                 Surface(
@@ -110,7 +103,7 @@ class MainActivity : ComponentActivity() {
 }
 
 
-class MyViewModel() : ViewModel() {
+class MyViewModel : ViewModel() {
     val scanResults = MutableLiveData<List<ScanResult>>(null)
     val fScanning = MutableLiveData(false)
     private val mResults = HashMap<String, ScanResult>()
@@ -149,20 +142,16 @@ class MyViewModel() : ViewModel() {
 @Composable
 fun ShowDevices(model: MyViewModel) {
     val value: List<ScanResult>? by model.scanResults.observeAsState(null)
-    val fScanning: Boolean by model.fScanning.observeAsState(false)
     Column {
         LazyColumn {
             value?.let { items ->
                 try {
                     items(items) {
-
-                        /*          (if (it.isConnectable) it.device.address else null)?.let { it1 ->*/
                         Text(
                             text = "${it.device.address} ${if (it.device.name == null) "" else it.device.name} ${it.rssi}dBm",
                             fontSize = 15.sp,
                             color = if (it.isConnectable) Color.Black else Color.Gray,
                         )
-                        /*}*/
                     }
                 } catch (e: SecurityException) {
                     Log.i("Permission", "Permission denied ${e.localizedMessage}")
