@@ -84,6 +84,7 @@ class MainActivity : ComponentActivity() {
                     Column(modifier = Modifier.fillMaxSize()) {
                         val model: MyViewModel by viewModels()
                         val gal by model.mBPM.observeAsState()
+                        val connected by model.connected.observeAsState()
                         Column(
                             Modifier
                                 .fillMaxWidth()
@@ -105,9 +106,10 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         Spacer(modifier = Modifier.height(10.dp))
-                        if (gal != 0) {
-                            Text(text = "Connected $gal bpm")
-                        }
+                        Text(
+                            text = if (gal != 0) "Connected $gal"
+                            else if (connected == true) "Connected" else ""
+                        )
                         Spacer(modifier = Modifier.height(10.dp))
                         Divider()
                         ShowDevices(model)
@@ -125,12 +127,57 @@ private fun convertFromInteger(i: Int): UUID {
     return UUID(MSB or (value shl 32), LSB)
 }
 
+
+@Composable
+fun ShowDevices(model: MyViewModel) {
+    val value: List<ScanResult>? by model.scanResults.observeAsState(null)
+    val context = LocalContext.current
+    val gattClientCallback = GattClientCallback(model)
+    Column {
+        LazyColumn {
+            value?.let { items ->
+                try {
+                    items(items) {
+                        Text(
+                            text = "${it.device.address} ${if (it.device.name == null) "" else it.device.name} ${it.rssi}dBm",
+                            fontSize = 15.sp,
+                            color = if (it.isConnectable) Color.Black else Color.Gray,
+                            modifier = Modifier.selectable(
+                                true
+                            ) {
+                                val gatt = it.device.connectGatt(
+                                    context,
+                                    false,
+                                    gattClientCallback
+                                )
+                                gatt.device.createBond()
+                                gattClientCallback.onConnectionStateChange(
+                                    gatt,
+                                    gatt.device.bondState,
+                                    BluetoothGatt.STATE_CONNECTED
+                                )
+                                gattClientCallback.onServicesDiscovered(
+                                    gatt,
+                                    gatt.device.bondState
+                                )
+                            }
+                        )
+                    }
+                } catch (e: SecurityException) {
+                    Log.i("Permission", "Permission denied ${e.localizedMessage}")
+                }
+            }
+        }
+    }
+}
+
+
 class MyViewModel() : ViewModel() {
     val scanResults = MutableLiveData<List<ScanResult>>(null)
     val fScanning = MutableLiveData(false)
     private val mResults = HashMap<String, ScanResult>()
-    val mBPM = MutableLiveData<Int>(0)
-
+    val mBPM = MutableLiveData(0)
+    val connected = MutableLiveData(false)
 
     fun scanDevices(scanner: BluetoothLeScanner) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -162,52 +209,34 @@ class MyViewModel() : ViewModel() {
     }
 }
 
+class GattClientCallback(model: MyViewModel) : BluetoothGattCallback() {
+    val modal = model
 
-@Composable
-fun ShowDevices(model: MyViewModel) {
-    val value: List<ScanResult>? by model.scanResults.observeAsState(null)
-    val context = LocalContext.current
-    val gattClientCallback = GattClientCallback(context, model)
-    Column {
-        LazyColumn {
-            value?.let { items ->
-                try {
-                    items(items) {
-                        Text(
-                            text = "${it.device.address} ${if (it.device.name == null) "" else it.device.name} ${it.rssi}dBm",
-                            fontSize = 15.sp,
-                            color = if (it.isConnectable) Color.Black else Color.Gray,
-                            modifier = Modifier.selectable(
-                                true
-                            ) {
-                                val gatt = it.device.connectGatt(
-                                    context,
-                                    false,
-                                    gattClientCallback
-                                )
-                                gatt.device.createBond()
-                                gatt.discoverServices()
-                                gattClientCallback.onServicesDiscovered(
-                                    gatt,
-                                    gatt.device.bondState
-                                )
-                            }
-                        )
-                    }
-                } catch (e: SecurityException) {
-                    Log.i("Permission", "Permission denied ${e.localizedMessage}")
-                }
+    override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+        super.onConnectionStateChange(gatt, status, newState)
+        if (status == BluetoothGatt.GATT_FAILURE) {
+            Log.d("DBG", "GATT connection failure")
+            return
+        } else if (status == BluetoothGatt.GATT_SUCCESS) {
+            Log.d("DBG", "GATT connection success")
+            return
+        }
+        if (newState == BluetoothProfile.STATE_CONNECTED) {
+            Log.d("DBG", "Connected GATT service")
+            try {
+                gatt.discoverServices()
+                modal.connected.postValue(gatt.connect())
+            } catch (e: SecurityException) {
+                Log.i("Permission", "Permission denied ${e.localizedMessage}")
             }
+        } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+            Log.d("DBG", "Disconnect GATT service")
+
         }
     }
-}
 
-
-class GattClientCallback(context: Context, model: MyViewModel) : BluetoothGattCallback() {
-    val modal = model
     override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
         super.onServicesDiscovered(gatt, status)
-        Log.d("DBG", (status == BluetoothGatt.GATT_SUCCESS).toString())
         if (status != BluetoothGatt.GATT_SUCCESS) {
             Log.d("DBG", "No success")
             return
