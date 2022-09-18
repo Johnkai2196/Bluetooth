@@ -107,7 +107,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = if (gal != 0) "Connected $gal"
+                            text = if (gal != 0) "Connected $gal BPM"
                             else if (connected == true) "Connected" else ""
                         )
                         Spacer(modifier = Modifier.height(10.dp))
