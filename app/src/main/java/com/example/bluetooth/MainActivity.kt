@@ -13,6 +13,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -27,14 +28,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.navigation.NavController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import com.example.bluetooth.MainActivity.GattAttributes.CLIENT_CHARACTERISTIC_CONFIG_UUID
 import com.example.bluetooth.MainActivity.GattAttributes.HEART_RATE_MEASUREMENT_CHAR_UUID
 import com.example.bluetooth.MainActivity.GattAttributes.HEART_RATE_SERVICE_UUID
 import com.example.bluetooth.MainActivity.GattAttributes.SCAN_PERIOD
 import com.example.bluetooth.ui.theme.BluetoothTheme
+import com.github.mikephil.charting.charts.LineChart
+import com.github.mikephil.charting.components.Description
+import com.github.mikephil.charting.data.Entry
+import com.github.mikephil.charting.data.LineData
+import com.github.mikephil.charting.data.LineDataSet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -60,7 +71,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
             mBluetoothAdapter = bluetoothManager.adapter
-            val mResults = HashMap<String, ScanResult>()
+            val navController = rememberNavController()
             BluetoothTheme {
                 // A surface container using the 'background' color from the theme
                 Surface(
@@ -83,36 +94,23 @@ class MainActivity : ComponentActivity() {
                     )
                     Column(modifier = Modifier.fillMaxSize()) {
                         val model: MyViewModel by viewModels()
-                        val gal by model.mBPM.observeAsState()
-                        val connected by model.connected.observeAsState()
+                        val gra by model.graph.observeAsState()
                         Column(
                             Modifier
                                 .fillMaxWidth()
                                 .absolutePadding(10.dp, 10.dp, 10.dp, 0.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-
-                            Button(
-                                onClick = {
-                                    model.scanDevices(
-                                        bluetoothManager.adapter.bluetoothLeScanner,
-                                    )
-                                }, modifier = Modifier
-                                    .height(50.dp)
-                                    .width(200.dp)
-
-                            ) {
-                                Text(text = "Start scanning")
+                            NavHost(navController, startDestination = "start") {
+                                composable("start") {
+                                    AllFunction(model, bluetoothManager, navController)
+                                }
+                                composable("startBpm") {
+                                    LookAtThisGraph(gra)
+                                }
                             }
                         }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = if (gal != 0) "Connected $gal BPM"
-                            else if (connected == true) "Connected" else ""
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Divider()
-                        ShowDevices(model)
+
                     }
                 }
             }
@@ -125,6 +123,69 @@ private fun convertFromInteger(i: Int): UUID {
     val LSB = -0x7fffff7fa064cb05L
     val value = (i and -0x1).toLong()
     return UUID(MSB or (value shl 32), LSB)
+}
+
+
+@Composable
+fun LookAtThisGraph(gra: MutableList<Entry>?) {
+    AndroidView(
+        modifier = Modifier.fillMaxSize(),
+        factory = { context: Context ->
+            val view = LineChart(context)
+            view.legend.isEnabled = false
+            val data = LineData(LineDataSet(gra, "BPM"))
+            val desc = Description()
+            desc.text = "Beats Per Minute"
+            view.description = desc;
+            view.data = data
+            view // return the view
+        },
+        update = { view ->
+            // Update the view
+            view.invalidate()
+        }
+    )
+
+}
+
+@Composable
+fun AllFunction(
+    model: MyViewModel,
+    bluetoothManager: BluetoothManager,
+    navController: NavController
+) {
+    val gal by model.mBPM.observeAsState()
+    val connected by model.connected.observeAsState()
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .absolutePadding(10.dp, 10.dp, 10.dp, 0.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Button(
+            onClick = {
+                model.scanDevices(
+                    bluetoothManager.adapter.bluetoothLeScanner,
+                )
+            }, modifier = Modifier
+                .height(50.dp)
+                .width(200.dp)
+
+        ) {
+            Text(text = "Start scanning")
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+            text = if (gal != 0) "Connected $gal BPM"
+            else if (connected == true) "Connected" else "",
+            modifier = Modifier.clickable {
+                navController.navigate("startBpm")
+            }
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        Divider()
+        ShowDevices(model)
+    }
 }
 
 
@@ -177,6 +238,7 @@ class MyViewModel() : ViewModel() {
     val fScanning = MutableLiveData(false)
     private val mResults = HashMap<String, ScanResult>()
     val mBPM = MutableLiveData(0)
+    val graph = MutableLiveData(mutableListOf<Entry>())
     val connected = MutableLiveData(false)
 
     fun scanDevices(scanner: BluetoothLeScanner) {
@@ -284,14 +346,17 @@ class GattClientCallback(model: MyViewModel) : BluetoothGattCallback() {
         Log.d("DBG", "onDescriptorWrite")
     }
 
-
+    var i = 0f
     override fun onCharacteristicChanged(
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic
     ) {
         val bpm = characteristic.getIntValue(BluetoothGattCharacteristic.FORMAT_UINT16, 1)
+
         Log.d("DBG", "BPM: $bpm")
         modal.mBPM.postValue(bpm)
+        modal.graph.value?.add(Entry(i++, bpm.toFloat()))
     }
 
 }
+
